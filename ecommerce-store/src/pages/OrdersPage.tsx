@@ -3,8 +3,12 @@ import { motion } from 'framer-motion';
 import { useAuth } from '../context/AuthContext';
 import { useLocation } from 'react-router-dom';
 
+// Shape of each item in an order returned by the backend
+// Note: backend stores productId (not id). We keep id optional to remain
+// compatible if any historical local orders had `id`.
 interface OrderItem {
-  id: string;
+  productId: string;
+  id?: string; // optional fallback
   name: string;
   price: number;
   quantity: number;
@@ -12,17 +16,17 @@ interface OrderItem {
   category?: string;
 }
 
+// Minimal address fields the UI uses
 interface Address {
-  id: string;
   type: string;
   street: string;
   city: string;
   state: string;
   zip: string;
   country: string;
-  isDefault: boolean;
 }
 
+// Order object returned by the backend
 interface Order {
   _id: string;
   orderNumber: string;
@@ -41,45 +45,49 @@ const OrdersPage: React.FC = () => {
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    // Only fetch orders if user is available
-    if (!user) {
-      console.log('User not available yet, skipping order fetch');
-      return;
-    }
-    
-    // Fetch orders from API
-    const fetchOrders = async () => {
-      try {
-        const response = await fetch('http://localhost:5000/api/orders', {
-          headers: {
-            'Authorization': `Bearer ${localStorage.getItem('token')}`
-          }
-        });
-        
-        if (!response.ok) {
-          throw new Error('Failed to fetch orders');
-        }
-        
-        const result = await response.json();
-        
-        if (result.success) {
-          console.log('Fetched orders from API:', result.orders);
-          setOrders(result.orders);
-        } else {
-          console.error('Failed to fetch orders:', result.message);
-          setOrders([]);
-        }
-      } catch (error) {
-        console.error('Error fetching orders:', error);
-        setOrders([]);
-      } finally {
-        setLoading(false);
-      }
-    };
+  // Prefer API URL from env; fallback to localhost for dev
+  const API_URL = (process.env.REACT_APP_API_URL || 'http://localhost:5000/api').replace(/\/$/, '');
 
+  // Fetch orders for the current user from backend
+  const fetchOrders = async () => {
+    if (!user) return; // safety guard
+    try {
+      setLoading(true);
+      const response = await fetch(`${API_URL}/orders`, {
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('token') || ''}`
+        }
+      });
+      if (!response.ok) throw new Error('Failed to fetch orders');
+      const result = await response.json();
+      if (result?.success && Array.isArray(result.orders)) {
+        setOrders(result.orders);
+      } else {
+        setOrders([]);
+      }
+    } catch (err) {
+      console.error('Error fetching orders:', err);
+      setOrders([]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Initial fetch when user is ready
+  useEffect(() => {
+    if (!user) return;
     fetchOrders();
-  }, [user]); // Change dependency to user instead of user?.id
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user]);
+
+  // Live refresh: if checkout fires a global 'orders:updated' event,
+  // re-fetch orders so the new order appears immediately
+  useEffect(() => {
+    const onOrdersUpdated = () => fetchOrders();
+    window.addEventListener('orders:updated', onOrdersUpdated as EventListener);
+    return () => window.removeEventListener('orders:updated', onOrdersUpdated as EventListener);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user]);
 
   // Fallback image handler
   const getFallbackImage = (category: string) => {
@@ -169,7 +177,10 @@ const OrdersPage: React.FC = () => {
                 <div className="p-6">
                   <div className="space-y-4">
                     {order.items.map((item) => (
-                      <div key={item.id} className="flex items-center space-x-4">
+                      <div
+                        key={item.productId || item.id || Math.random().toString(36)}
+                        className="flex items-center space-x-4"
+                      >
                         <div className="w-20 h-20 rounded-lg overflow-hidden bg-gray-100">
                           <img
                             src={item.image}

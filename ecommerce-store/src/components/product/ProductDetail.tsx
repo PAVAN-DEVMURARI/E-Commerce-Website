@@ -26,6 +26,38 @@ interface ExtendedUserData {
   }[];
 }
 
+// ---- Orders types (aligned with backend schema) ----
+interface OrderItem {
+  productId: string;
+  id?: string; // optional legacy field
+  name: string;
+  price: number;
+  quantity: number;
+  image: string;
+  category?: string;
+}
+
+interface Address {
+  type?: string;
+  street?: string;
+  city?: string;
+  state?: string;
+  zip?: string;
+  country?: string;
+}
+
+interface Order {
+  _id: string;
+  orderNumber: string;
+  createdAt: string;
+  status: string; // e.g. 'pending' | 'processing' | 'shipped' | 'delivered' | 'cancelled'
+  items: OrderItem[];
+  total: number;
+  shippingAddress?: Address | null;
+  paymentMethod?: string;
+  userId: string;
+}
+
 // Modify the component to accept props for initial tab selection
 interface ProductDetailProps {
   initialTab?: AccountTab;
@@ -56,6 +88,56 @@ const ProductDetail: React.FC<ProductDetailProps> = ({ initialTab = 'profile' })
   
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
 
+  // Orders state for the "Orders" tab
+  const [orders, setOrders] = useState<Order[]>([]);
+  const [ordersLoading, setOrdersLoading] = useState<boolean>(false);
+
+  // Prefer API URL from env; fallback to localhost for dev
+  const API_URL = (process.env.REACT_APP_API_URL || 'http://localhost:5000/api').replace(/\/$/, '');
+
+  // Fetch current user's orders from backend
+  const fetchOrders = async () => {
+    if (!user) return;
+    try {
+      setOrdersLoading(true);
+      const response = await fetch(`${API_URL}/orders`, {
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('token') || ''}`
+        }
+      });
+      if (!response.ok) throw new Error('Failed to fetch orders');
+      const result = await response.json();
+      if (result?.success && Array.isArray(result.orders)) {
+        setOrders(result.orders);
+      } else {
+        setOrders([]);
+      }
+    } catch (err) {
+      console.error('Error fetching orders:', err);
+      setOrders([]);
+    } finally {
+      setOrdersLoading(false);
+    }
+  };
+
+  // When switching to Orders tab (and when user becomes available), load orders
+  useEffect(() => {
+    if (activeTab === 'orders' && user) {
+      fetchOrders();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, user]);
+
+  // Live refresh after checkout emits a global 'orders:updated' event
+  useEffect(() => {
+    const onOrdersUpdated = () => {
+      if (activeTab === 'orders' && user) fetchOrders();
+    };
+    window.addEventListener('orders:updated', onOrdersUpdated as EventListener);
+    return () => window.removeEventListener('orders:updated', onOrdersUpdated as EventListener);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, user]);
+
   // Create a safe user object merging auth user with default values
   const userData: ExtendedUserData = {
     name: user?.name || 'John Doe',
@@ -78,32 +160,38 @@ const ProductDetail: React.FC<ProductDetailProps> = ({ initialTab = 'profile' })
     ]
   };
 
-  // Mock orders data
-  const orders = [
-    {
-      id: 'ORD-1234567',
-      date: '2023-05-15',
-      status: 'Processing',
-      total: 249.99,
-      items: [
-        { id: '1', name: 'Premium Headphones', quantity: 1, price: 199.99, image: 'https://images.unsplash.com/photo-1505740420928-5e560c06d30e?ixlib=rb-4.0.3&auto=format&fit=crop&w=300&q=80' },
-        { id: '2', name: 'USB-C Cable', quantity: 2, price: 25.00, image: 'https://images.unsplash.com/photo-1583394838336-acd977736f90?ixlib=rb-4.0.3&auto=format&fit=crop&w=300&q=80' }
-      ]
-    },
-    {
-      id: 'ORD-7654321',
-      date: '2023-04-02',
-      status: 'Delivered',
-      total: 129.95,
-      items: [
-        { id: '3', name: 'Wireless Mouse', quantity: 1, price: 79.95, image: 'https://images.unsplash.com/photo-1615663245857-ac93bb7c39e7?ixlib=rb-4.0.3&auto=format&fit=crop&w=300&q=80' },
-        { id: '4', name: 'Mousepad XL', quantity: 1, price: 50.00, image: 'https://images.unsplash.com/photo-1606159068539-43f36b99d1b2?ixlib=rb-4.0.3&auto=format&fit=crop&w=300&q=80' }
-      ]
-    }
-  ];
+  // Helper to map backend status to human-friendly label
+  const getStatusLabel = (status: string) => {
+    const s = (status || '').toLowerCase();
+    return s.charAt(0).toUpperCase() + s.slice(1); // pending -> Pending
+  };
+
+  // Helper to map status to badge colors
+  const getStatusBadgeClass = (status: string) => {
+    const s = (status || '').toLowerCase();
+    if (s === 'delivered') return 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200';
+    if (s === 'shipped') return 'bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200';
+    if (s === 'processing') return 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200';
+    if (s === 'pending') return 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200';
+    if (s === 'cancelled') return 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200';
+    return 'bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-200';
+  };
+
+  // Fallback image by category
+  const getFallbackImage = (category?: string) => {
+    const fallbackImages: { [key: string]: string } = {
+      electronics: 'https://images.unsplash.com/photo-1550009158-9ebf69173e03?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&q=80',
+      furniture: 'https://images.unsplash.com/photo-1555041469-a586c61ea9bc?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&q=80',
+      clothing: 'https://images.unsplash.com/photo-1523381210434-271e8be1f52b?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&q=80',
+      default: 'https://images.unsplash.com/photo-1553531384-411a247ccd73?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&q=80',
+    };
+    const key = (category || 'default').toLowerCase();
+    return fallbackImages[key] || fallbackImages.default;
+  };
 
   // Function to handle clicking on an order
   const handleOrderClick = (orderId: string) => {
+    // We store the MongoDB _id as the selected identifier
     setSelectedOrderId(orderId);
   };
 
@@ -113,8 +201,8 @@ const ProductDetail: React.FC<ProductDetailProps> = ({ initialTab = 'profile' })
   };
 
   // Get the selected order
-  const selectedOrder = selectedOrderId 
-    ? orders.find(order => order.id === selectedOrderId)
+  const selectedOrder: Order | null = selectedOrderId
+    ? (orders.find(order => order._id === selectedOrderId) || null)
     : null;
 
   const handleLogout = () => {
@@ -342,7 +430,7 @@ const ProductDetail: React.FC<ProductDetailProps> = ({ initialTab = 'profile' })
                     {selectedOrder ? 'Order Details' : 'My Orders'}
                   </h2>
                   
-                  {selectedOrder ? (
+                    {selectedOrder ? (
                     /* Order Detail View */
                     <div>
                       {/* Back Button */}
@@ -360,13 +448,13 @@ const ProductDetail: React.FC<ProductDetailProps> = ({ initialTab = 'profile' })
                       <div className="bg-gray-50 dark:bg-gray-700 p-6 rounded-lg mb-6">
                         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
                           <div>
-                            <h3 className="text-sm text-gray-500 dark:text-gray-400">Order ID</h3>
-                            <p className="font-medium text-gray-900 dark:text-white">{selectedOrder.id}</p>
+                            <h3 className="text-sm text-gray-500 dark:text-gray-400">Order #</h3>
+                            <p className="font-medium text-gray-900 dark:text-white">{selectedOrder.orderNumber}</p>
                           </div>
                           <div>
                             <h3 className="text-sm text-gray-500 dark:text-gray-400">Date Placed</h3>
                             <p className="font-medium text-gray-900 dark:text-white">
-                              {new Date(selectedOrder.date).toLocaleDateString()}
+                              {new Date(selectedOrder.createdAt).toLocaleDateString()}
                             </p>
                           </div>
                           <div>
@@ -375,12 +463,8 @@ const ProductDetail: React.FC<ProductDetailProps> = ({ initialTab = 'profile' })
                           </div>
                           <div>
                             <h3 className="text-sm text-gray-500 dark:text-gray-400">Status</h3>
-                            <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                              ['Processing', 'Shipped', 'Delivered'].includes(selectedOrder.status) 
-                                ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200'
-                                : 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200'
-                            }`}>
-                              {selectedOrder.status}
+                            <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getStatusBadgeClass(selectedOrder.status)}`}>
+                              {getStatusLabel(selectedOrder.status)}
                             </span>
                           </div>
                         </div>
@@ -393,56 +477,32 @@ const ProductDetail: React.FC<ProductDetailProps> = ({ initialTab = 'profile' })
                           <div className="relative">
                             <div className="absolute -left-[25px] w-4 h-4 rounded-full bg-green-500"></div>
                             <div className="mb-1 text-sm text-gray-500 dark:text-gray-400">
-                              {new Date(selectedOrder.date).toLocaleDateString()}
+                              {new Date(selectedOrder.createdAt).toLocaleDateString()}
                             </div>
                             <p className="font-medium text-gray-900 dark:text-white">Order Placed</p>
                           </div>
                           <div className="relative">
-                            <div className={`absolute -left-[25px] w-4 h-4 rounded-full ${
-                              ['Processing', 'Shipped', 'Delivered'].includes(selectedOrder.status) 
-                                ? 'bg-green-500' 
-                                : 'bg-gray-300 dark:bg-gray-600'
-                            }`}></div>
+                            <div className={`absolute -left-[25px] w-4 h-4 rounded-full ${['processing', 'shipped', 'delivered'].includes(selectedOrder.status.toLowerCase()) ? 'bg-green-500' : 'bg-gray-300 dark:bg-gray-600'}`}></div>
                             <div className="mb-1 text-sm text-gray-500 dark:text-gray-400">
-                              {new Date(new Date(selectedOrder.date).getTime() + 86400000).toLocaleDateString()}
+                              {new Date(new Date(selectedOrder.createdAt).getTime() + 86400000).toLocaleDateString()}
                             </div>
-                            <p className={`font-medium ${
-                              ['Processing', 'Shipped', 'Delivered'].includes(selectedOrder.status)
-                                ? 'text-gray-900 dark:text-white'
-                                : 'text-gray-400 dark:text-gray-500'
-                            }`}>Order Processed</p>
+                            <p className={`font-medium ${['processing', 'shipped', 'delivered'].includes(selectedOrder.status.toLowerCase()) ? 'text-gray-900 dark:text-white' : 'text-gray-400 dark:text-gray-500'}`}>Order Processed</p>
                           </div>
                           <div className="relative">
-                            <div className={`absolute -left-[25px] w-4 h-4 rounded-full ${
-                              ['Shipped', 'Delivered'].includes(selectedOrder.status)
-                                ? 'bg-green-500'
-                                : 'bg-gray-300 dark:bg-gray-600'
-                            }`}></div>
+                            <div className={`absolute -left-[25px] w-4 h-4 rounded-full ${['shipped', 'delivered'].includes(selectedOrder.status.toLowerCase()) ? 'bg-green-500' : 'bg-gray-300 dark:bg-gray-600'}`}></div>
                             <div className="mb-1 text-sm text-gray-500 dark:text-gray-400">
-                              {new Date(new Date(selectedOrder.date).getTime() + 172800000).toLocaleDateString()}
+                              {new Date(new Date(selectedOrder.createdAt).getTime() + 172800000).toLocaleDateString()}
                             </div>
-                            <p className={`font-medium ${
-                              ['Shipped', 'Delivered'].includes(selectedOrder.status)
-                                ? 'text-gray-900 dark:text-white'
-                                : 'text-gray-400 dark:text-gray-500'
-                            }`}>Order Shipped</p>
+                            <p className={`font-medium ${['shipped', 'delivered'].includes(selectedOrder.status.toLowerCase()) ? 'text-gray-900 dark:text-white' : 'text-gray-400 dark:text-gray-500'}`}>Order Shipped</p>
                           </div>
                           <div className="relative">
-                            <div className={`absolute -left-[25px] w-4 h-4 rounded-full ${
-                              selectedOrder.status === 'Delivered' 
-                                ? 'bg-green-500' 
-                                : 'bg-gray-300 dark:bg-gray-600'
-                            }`}></div>
+                            <div className={`absolute -left-[25px] w-4 h-4 rounded-full ${selectedOrder.status.toLowerCase() === 'delivered' ? 'bg-green-500' : 'bg-gray-300 dark:bg-gray-600'}`}></div>
                             <div className="mb-1 text-sm text-gray-500 dark:text-gray-400">
-                              {selectedOrder.status === 'Delivered' 
-                                ? new Date(new Date(selectedOrder.date).getTime() + 432000000).toLocaleDateString()
+                              {selectedOrder.status.toLowerCase() === 'delivered' 
+                                ? new Date(new Date(selectedOrder.createdAt).getTime() + 432000000).toLocaleDateString()
                                 : 'Pending'}
                             </div>
-                            <p className={`font-medium ${
-                              selectedOrder.status === 'Delivered'
-                                ? 'text-gray-900 dark:text-white'
-                                : 'text-gray-400 dark:text-gray-500'
-                            }`}>Order Delivered</p>
+                            <p className={`font-medium ${selectedOrder.status.toLowerCase() === 'delivered' ? 'text-gray-900 dark:text-white' : 'text-gray-400 dark:text-gray-500'}`}>Order Delivered</p>
                           </div>
                         </div>
                       </div>
@@ -452,12 +512,16 @@ const ProductDetail: React.FC<ProductDetailProps> = ({ initialTab = 'profile' })
                         <h3 className="text-lg font-medium mb-4 text-gray-900 dark:text-white">Items ({selectedOrder.items.length})</h3>
                         <div className="border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden">
                           {selectedOrder.items.map((item, index) => (
-                            <div key={item.id} className={`flex p-4 ${index !== selectedOrder.items.length - 1 ? 'border-b border-gray-200 dark:border-gray-700' : ''}`}>
+                            <div key={item.productId || item.id || index} className={`flex p-4 ${index !== selectedOrder.items.length - 1 ? 'border-b border-gray-200 dark:border-gray-700' : ''}`}>
                               <div className="w-20 h-20 flex-shrink-0 bg-gray-100 dark:bg-gray-800 rounded overflow-hidden">
                                 <img
                                   src={item.image}
                                   alt={item.name}
                                   className="w-full h-full object-cover"
+                                  onError={(e) => {
+                                    const target = e.target as HTMLImageElement;
+                                    target.src = getFallbackImage(item.category);
+                                  }}
                                 />
                               </div>
                               <div className="ml-4 flex-grow">
@@ -537,22 +601,31 @@ const ProductDetail: React.FC<ProductDetailProps> = ({ initialTab = 'profile' })
                       
                       {/* Orders List */}
                       <div className="space-y-6">
-                        {orders.map(order => (
+                        {/* Loading state */}
+                        {ordersLoading && (
+                          <div className="text-sm text-gray-600 dark:text-gray-400">Loading your orders...</div>
+                        )}
+                        {/* Empty state */}
+                        {!ordersLoading && orders.length === 0 && (
+                          <div className="text-sm text-gray-600 dark:text-gray-400">You haven't placed any orders yet.</div>
+                        )}
+                        {/* Orders */}
+                        {!ordersLoading && orders.map(order => (
                           <div 
-                            key={order.id} 
+                            key={order._id}
                             className="border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden cursor-pointer hover:shadow-md transition-shadow"
-                            onClick={() => handleOrderClick(order.id)}
+                            onClick={() => handleOrderClick(order._id)}
                           >
                             {/* Order Header */}
                             <div className="bg-gray-50 dark:bg-gray-700 px-6 py-4 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
                               <div>
                                 <p className="text-sm text-gray-500 dark:text-gray-400">Order #</p>
-                                <p className="font-medium text-gray-900 dark:text-white">{order.id}</p>
+                                <p className="font-medium text-gray-900 dark:text-white">{order.orderNumber}</p>
                               </div>
                               
                               <div>
                                 <p className="text-sm text-gray-500 dark:text-gray-400">Date</p>
-                                <p className="font-medium text-gray-900 dark:text-white">{new Date(order.date).toLocaleDateString()}</p>
+                                <p className="font-medium text-gray-900 dark:text-white">{new Date(order.createdAt).toLocaleDateString()}</p>
                               </div>
                               
                               <div>
@@ -562,14 +635,8 @@ const ProductDetail: React.FC<ProductDetailProps> = ({ initialTab = 'profile' })
                               
                               <div>
                                 <p className="text-sm text-gray-500 dark:text-gray-400">Status</p>
-                                <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                                  order.status === 'Delivered' 
-                                    ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200'
-                                    : order.status === 'Processing'
-                                    ? 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200'
-                                    : 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200'
-                                }`}>
-                                  {order.status}
+                                <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getStatusBadgeClass(order.status)}`}>
+                                  {getStatusLabel(order.status)}
                                 </span>
                               </div>
                               
@@ -578,7 +645,7 @@ const ProductDetail: React.FC<ProductDetailProps> = ({ initialTab = 'profile' })
                                   className="text-primary hover:text-primary-dark font-medium text-sm flex items-center"
                                   onClick={(e) => {
                                     e.stopPropagation();
-                                    handleOrderClick(order.id);
+                                    handleOrderClick(order._id);
                                   }}
                                 >
                                   View Details
@@ -594,12 +661,16 @@ const ProductDetail: React.FC<ProductDetailProps> = ({ initialTab = 'profile' })
                               <h4 className="text-sm font-medium text-gray-900 dark:text-white mb-4">Items</h4>
                               
                               <div className="space-y-4">
-                                {order.items.map(item => (
-                                  <div key={item.id} className="flex items-center space-x-4">
+                                {order.items.map((item, idx) => (
+                                  <div key={item.productId || item.id || idx} className="flex items-center space-x-4">
                                     <img
                                       src={item.image}
                                       alt={item.name}
                                       className="w-16 h-16 object-cover rounded"
+                                      onError={(e) => {
+                                        const target = e.target as HTMLImageElement;
+                                        target.src = getFallbackImage(item.category);
+                                      }}
                                     />
                                     <div className="flex-1 min-w-0">
                                       <p className="font-medium text-gray-900 dark:text-white truncate">

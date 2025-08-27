@@ -42,6 +42,15 @@ const UserSchema = new mongoose.Schema({
     type: Boolean,
     default: true,
   },
+  // Track actual sign-ins
+  lastLogin: {
+    type: Date,
+    default: null,
+  },
+  loginCount: {
+    type: Number,
+    default: 0,
+  },
   createdAt: {
     type: Date,
     default: Date.now,

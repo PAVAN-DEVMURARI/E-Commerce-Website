@@ -68,6 +68,16 @@ app.post('/api/auth/register', async (req, res) => {
       await user.save();
       console.log('User saved successfully');
       
+      // Mark as signed in on registration (UI logs in immediately after register)
+      try {
+        await User.findByIdAndUpdate(user._id, {
+          $set: { lastLogin: new Date() },
+          $inc: { loginCount: 1 }
+        });
+      } catch (e) {
+        console.error('Failed to set initial login stats on register:', e);
+      }
+
       // Create JWT token
       const token = jwt.sign({ id: user._id }, JWT_SECRET, {
         expiresIn: '30d',
@@ -111,13 +121,13 @@ app.post('/api/auth/login', async (req, res) => {
     const { email, password } = req.body;
     
     // Find user
-    const user = await User.findOne({ email }).select('+password');
+  const user = await User.findOne({ email }).select('+password');
     if (!user) {
       return res.status(401).json({ success: false, message: 'Invalid credentials' });
     }
     
     // Check password
-    const isMatch = await user.comparePassword(password);
+  const isMatch = await user.comparePassword(password);
     if (!isMatch) {
       return res.status(401).json({ success: false, message: 'Invalid credentials' });
     }
@@ -127,6 +137,16 @@ app.post('/api/auth/login', async (req, res) => {
       expiresIn: '30d',
     });
     
+    // Update lastLogin and loginCount
+    try {
+      await User.findByIdAndUpdate(user._id, {
+        $set: { lastLogin: new Date() },
+        $inc: { loginCount: 1 }
+      });
+    } catch (e) {
+      console.error('Failed to update login stats:', e);
+    }
+
     res.json({
       success: true,
       token,

@@ -12,6 +12,7 @@ interface User {
 }
 
 const AdminUsers: React.FC = () => {
+  const API_URL = (process.env.REACT_APP_API_URL || 'http://localhost:5000/api').replace(/\/$/, '');
   const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -29,7 +30,7 @@ const AdminUsers: React.FC = () => {
     try {
       setLoading(true);
       const token = localStorage.getItem('token');
-      const response = await axios.get(`http://localhost:5000/api/admin/users`, {
+  const response = await axios.get(`${API_URL}/admin/users`, {
         headers: { Authorization: `Bearer ${token}` },
         params: {
           page: currentPage,
@@ -52,7 +53,7 @@ const AdminUsers: React.FC = () => {
   const handleDeleteUser = async (userId: string) => {
     try {
       const token = localStorage.getItem('token');
-      await axios.delete(`http://localhost:5000/api/admin/users/${userId}`, {
+  await axios.delete(`${API_URL}/admin/users/${userId}`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       
@@ -67,7 +68,7 @@ const AdminUsers: React.FC = () => {
   const handleToggleUserStatus = async (userId: string) => {
     try {
       const token = localStorage.getItem('token');
-      await axios.patch(`http://localhost:5000/api/admin/users/${userId}/toggle-status`, {}, {
+  await axios.patch(`${API_URL}/admin/users/${userId}/toggle-status`, {}, {
         headers: { Authorization: `Bearer ${token}` }
       });
       

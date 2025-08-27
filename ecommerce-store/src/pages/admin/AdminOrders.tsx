@@ -1,72 +1,111 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
+import axios from 'axios';
 
-interface Order {
-  id: string;
-  customerName: string;
-  email: string;
-  total: number;
-  status: 'pending' | 'processing' | 'shipped' | 'delivered' | 'cancelled';
-  date: string;
-  items: number;
+interface OrderItem {
+  productId: string;
+  name: string;
+  price: number;
+  quantity: number;
+  image: string;
 }
 
-// Mock data - replace with API call
-const mockOrders: Order[] = [
-  {
-    id: 'ORD-001',
-    customerName: 'John Doe',
-    email: 'john@example.com',
-    total: 299.99,
-    status: 'pending',
-    date: '2024-01-15',
-    items: 3
-  },
-  {
-    id: 'ORD-002',
-    customerName: 'Jane Smith',
-    email: 'jane@example.com',
-    total: 149.50,
-    status: 'processing',
-    date: '2024-01-14',
-    items: 2
-  },
-  {
-    id: 'ORD-003',
-    customerName: 'Bob Johnson',
-    email: 'bob@example.com',
-    total: 89.99,
-    status: 'shipped',
-    date: '2024-01-13',
-    items: 1
-  },
-  {
-    id: 'ORD-004',
-    customerName: 'Alice Brown',
-    email: 'alice@example.com',
-    total: 199.99,
-    status: 'delivered',
-    date: '2024-01-12',
-    items: 4
-  }
-];
+interface Order {
+  _id: string;
+  orderNumber: string;
+  userId: { _id: string; name: string; email: string } | string;
+  total: number;
+  status: 'pending' | 'processing' | 'shipped' | 'delivered' | 'cancelled';
+  createdAt: string;
+  items: OrderItem[];
+}
 
 const AdminOrders: React.FC = () => {
-  const [orders, setOrders] = useState<Order[]>(mockOrders);
+  const [orders, setOrders] = useState<Order[]>([]);
   const [filterStatus, setFilterStatus] = useState<string>('all');
   const [searchTerm, setSearchTerm] = useState('');
+  const [loading, setLoading] = useState<boolean>(true);
+  const [error, setError] = useState<string | null>(null);
+  const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
 
-  const filteredOrders = orders.filter(order => {
-    const matchesStatus = filterStatus === 'all' || order.status === filterStatus;
-    const matchesSearch = order.customerName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         order.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         order.id.toLowerCase().includes(searchTerm.toLowerCase());
-    return matchesStatus && matchesSearch;
-  });
+  const API_URL = (process.env.REACT_APP_API_URL || 'http://localhost:5000/api').replace(/\/$/, '');
 
-  const updateOrderStatus = (orderId: string, newStatus: Order['status']) => {
-    setOrders(orders.map(order => 
-      order.id === orderId ? { ...order, status: newStatus } : order
-    ));
+  const fetchOrders = async () => {
+    try {
+      setLoading(true);
+      const token = localStorage.getItem('token');
+      const response = await axios.get(`${API_URL}/admin/orders`, {
+        headers: { Authorization: `Bearer ${token}` },
+        params: { page: 1, limit: 50, status: filterStatus, search: searchTerm }
+      });
+      if (response.data?.success) {
+        const list: Order[] = response.data.data.orders || [];
+        setOrders(list);
+        setError(null);
+      } else {
+        setOrders([]);
+        setError('Failed to load orders');
+      }
+    } catch (e) {
+      console.error('Failed to fetch orders', e);
+      // Provide clearer message when not admin/unauthorized
+      // @ts-ignore
+      const status = e?.response?.status;
+      if (status === 401) setError('Unauthorized. Please log in as an admin.');
+      else if (status === 403) setError('Forbidden. Your account does not have admin access.');
+      else setError('Unable to fetch orders. Please try again.');
+      setOrders([]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchOrders();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filterStatus]);
+
+  useEffect(() => {
+    const debounce = setTimeout(() => fetchOrders(), 400);
+    return () => clearTimeout(debounce);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchTerm]);
+
+  // Light polling to reflect latest orders in near real-time
+  useEffect(() => {
+    const timer = setInterval(() => {
+      fetchOrders();
+    }, 10000); // refresh every 10s
+    return () => clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filterStatus, searchTerm]);
+
+  // Immediate refresh when any page dispatches 'orders:updated' or storage flag changes
+  useEffect(() => {
+    const onOrdersUpdated = () => fetchOrders();
+    window.addEventListener('orders:updated', onOrdersUpdated as EventListener);
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === 'orders_last_update') fetchOrders();
+    };
+    window.addEventListener('storage', onStorage);
+    return () => {
+      window.removeEventListener('orders:updated', onOrdersUpdated as EventListener);
+      window.removeEventListener('storage', onStorage);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const filteredOrders = orders; // Filtering handled by API params
+
+  const updateOrderStatus = async (orderId: string, newStatus: Order['status']) => {
+    try {
+      const token = localStorage.getItem('token');
+      await axios.patch(`${API_URL}/admin/orders/${orderId}/status`, { status: newStatus }, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      setOrders(orders.map(order => order._id === orderId ? { ...order, status: newStatus } : order));
+    } catch (e) {
+      console.error('Failed to update status', e);
+    }
   };
 
   const getStatusColor = (status: Order['status']) => {
@@ -85,14 +124,17 @@ const AdminOrders: React.FC = () => {
       <div className="flex justify-between items-center">
         <h1 className="text-3xl font-bold text-gray-900">Order Management</h1>
         <div className="flex space-x-2">
-          <button className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 transition duration-200">
-            Export Orders
-          </button>
-          <button className="bg-green-600 text-white px-4 py-2 rounded-md hover:bg-green-700 transition duration-200">
+          <button onClick={fetchOrders} className="bg-green-600 text-white px-4 py-2 rounded-md hover:bg-green-700 transition duration-200">
             Refresh
           </button>
         </div>
       </div>
+
+      {error && (
+        <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded text-sm">
+          {error}
+        </div>
+      )}
 
       {/* Filters */}
       <div className="bg-white p-4 rounded-lg shadow-sm border">
@@ -151,20 +193,24 @@ const AdminOrders: React.FC = () => {
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
-              {filteredOrders.map((order) => (
-                <tr key={order.id} className="hover:bg-gray-50">
+              {loading ? (
+                <tr>
+                  <td colSpan={7} className="px-6 py-8 text-center text-gray-500">Loading orders…</td>
+                </tr>
+              ) : filteredOrders.map((order) => (
+                <tr key={order._id} className="hover:bg-gray-50">
                   <td className="px-6 py-4 whitespace-nowrap">
-                    <div className="text-sm font-medium text-gray-900">{order.id}</div>
+                    <div className="text-sm font-medium text-gray-900">{order.orderNumber}</div>
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
-                    <div className="text-sm font-medium text-gray-900">{order.customerName}</div>
-                    <div className="text-sm text-gray-500">{order.email}</div>
+                    <div className="text-sm font-medium text-gray-900">{typeof order.userId === 'object' ? order.userId.name : ''}</div>
+                    <div className="text-sm text-gray-500">{typeof order.userId === 'object' ? order.userId.email : ''}</div>
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
-                    <div className="text-sm text-gray-900">{order.items} item{order.items !== 1 ? 's' : ''}</div>
+                    <div className="text-sm text-gray-900">{order.items.length} item{order.items.length !== 1 ? 's' : ''}</div>
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
-                    <div className="text-sm font-medium text-gray-900">${order.total.toFixed(2)}</div>
+                    <div className="text-sm font-medium text-gray-900">₹{order.total.toFixed(2)}</div>
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
                     <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${getStatusColor(order.status)}`}>
@@ -172,14 +218,14 @@ const AdminOrders: React.FC = () => {
                     </span>
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                    {new Date(order.date).toLocaleDateString()}
+                    {new Date(order.createdAt).toLocaleDateString()}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                    <div className="flex space-x-2">
+                    <div className="flex space-x-2 items-center">
                       <select
                         value={order.status}
-                        onChange={(e) => updateOrderStatus(order.id, e.target.value as Order['status'])}
-                        className="text-xs px-2 py-1 border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
+                        onChange={(e) => updateOrderStatus(order._id, e.target.value as Order['status'])}
+                        className="text-xs px-2 py-1 border border-gray-300 rounded text-gray-700 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500"
                       >
                         <option value="pending">Pending</option>
                         <option value="processing">Processing</option>
@@ -187,7 +233,10 @@ const AdminOrders: React.FC = () => {
                         <option value="delivered">Delivered</option>
                         <option value="cancelled">Cancelled</option>
                       </select>
-                      <button className="text-blue-600 hover:text-blue-900 text-xs">
+                      <button
+                        className="text-blue-600 hover:text-blue-800 text-xs underline"
+                        onClick={() => setSelectedOrder(order)}
+                      >
                         View Details
                       </button>
                     </div>
@@ -240,6 +289,58 @@ const AdminOrders: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {/* View Details Modal */}
+      {selectedOrder && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg shadow-lg max-w-2xl w-full mx-4">
+            <div className="px-6 py-4 border-b flex justify-between items-center">
+              <h3 className="text-lg font-semibold">Order #{selectedOrder.orderNumber}</h3>
+              <button className="text-gray-500 hover:text-gray-700" onClick={() => setSelectedOrder(null)}>✕</button>
+            </div>
+            <div className="p-6 space-y-4">
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                <div>
+                  <div className="text-gray-500">Customer</div>
+                  <div className="font-medium">{typeof selectedOrder.userId === 'object' ? selectedOrder.userId.name : ''}</div>
+                  <div className="text-gray-500">{typeof selectedOrder.userId === 'object' ? selectedOrder.userId.email : ''}</div>
+                </div>
+                <div>
+                  <div className="text-gray-500">Status</div>
+                  <div className="font-medium capitalize">{selectedOrder.status}</div>
+                </div>
+                <div>
+                  <div className="text-gray-500">Placed</div>
+                  <div className="font-medium">{new Date(selectedOrder.createdAt).toLocaleString()}</div>
+                </div>
+                <div>
+                  <div className="text-gray-500">Total</div>
+                  <div className="font-medium">₹{selectedOrder.total.toFixed(2)}</div>
+                </div>
+              </div>
+
+              <div>
+                <h4 className="font-medium mb-2">Items ({selectedOrder.items.length})</h4>
+                <div className="divide-y">
+                  {selectedOrder.items.map((it, idx) => (
+                    <div key={idx} className="py-3 flex items-center gap-3">
+                      <img src={it.image} alt={it.name} className="w-12 h-12 rounded object-cover" />
+                      <div className="flex-1">
+                        <div className="font-medium">{it.name}</div>
+                        <div className="text-sm text-gray-500">Qty: {it.quantity}</div>
+                      </div>
+                      <div className="text-sm font-medium">₹{(it.price * it.quantity).toFixed(2)}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+            <div className="px-6 py-4 border-t flex justify-end">
+              <button className="px-4 py-2 text-gray-700 border rounded-md hover:bg-gray-50" onClick={() => setSelectedOrder(null)}>Close</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

@@ -21,6 +21,10 @@ const CheckoutPage: React.FC = () => {
   const navigate = useNavigate();
   const { user } = useAuth();
   const { items: cartItems, totalPrice, clearCart } = useCart();
+  
+  // Prefer API URL from environment in production; fallback to localhost in dev
+  // Expect REACT_APP_API_URL to be something like: http://localhost:5000/api
+  const API_URL = (process.env.REACT_APP_API_URL || 'http://localhost:5000/api').replace(/\/$/, '');
   const [currentStep, setCurrentStep] = useState(1);
   const [selectedAddress, setSelectedAddress] = useState<Address | null>(null);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('credit_card');
@@ -132,6 +136,9 @@ const CheckoutPage: React.FC = () => {
     setCurrentStep(currentStep + 1);
   };
 
+  // Places an order by sending cart + shipping + payment to backend
+  // On success, clears the cart, emits an event to refresh orders page,
+  // and navigates to order confirmation.
   const handlePlaceOrder = async () => {
     setIsProcessing(true);
     try {
@@ -161,8 +168,8 @@ const CheckoutPage: React.FC = () => {
       console.log('Current user during order creation:', user);
       console.log('Order data being sent:', orderData);
 
-      // Send order to backend
-      const response = await fetch('http://localhost:5000/api/orders', {
+  // Send order to backend
+  const response = await fetch(`${API_URL}/orders`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -179,8 +186,14 @@ const CheckoutPage: React.FC = () => {
 
       console.log('Order created successfully:', result.order);
 
-      // Clear the cart after successful order
+  // Clear the cart after successful order
       clearCart();
+      
+  // Notify other pages (like My Orders/Admin Orders) to re-fetch immediately
+  window.dispatchEvent(new Event('orders:updated'));
+  try {
+    localStorage.setItem('orders_last_update', String(Date.now()));
+  } catch {}
       
       // Navigate to confirmation page
       navigate('/order-confirmation', { state: { order: result.order } });

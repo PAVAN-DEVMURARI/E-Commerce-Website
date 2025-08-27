@@ -1,7 +1,9 @@
 import React, { useState, useEffect } from 'react';
+import { useLocation } from 'react-router-dom';
 import { Product } from '../../types/Product';
 
 const AdminProducts: React.FC = () => {
+  const location = useLocation();
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
@@ -16,6 +18,14 @@ const AdminProducts: React.FC = () => {
       setLoading(false);
     });
   }, []);
+
+  // When navigated from Quick Action: ?action=add opens Add Product modal
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    if (params.get('action') === 'add') {
+      setShowAddModal(true);
+    }
+  }, [location.search]);
 
   const filteredProducts = products.filter(product =>
     product.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -82,7 +92,7 @@ const AdminProducts: React.FC = () => {
             <div className="p-4">
               <h3 className="text-lg font-semibold text-gray-900 mb-2">{product.name}</h3>
               <p className="text-sm text-gray-600 mb-2">{product.category}</p>
-              <p className="text-xl font-bold text-blue-600 mb-3">${product.price}</p>
+              <p className="text-xl font-bold text-blue-600 mb-3">₹{product.price.toFixed(2)}</p>
               
               <div className="flex items-center justify-between mb-3">
                 <span className={`px-2 py-1 text-xs font-semibold rounded-full ${
@@ -164,7 +174,7 @@ const AdminProducts: React.FC = () => {
 
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Price
+                  Price (₹)
                 </label>
                 <input
                   type="number"
